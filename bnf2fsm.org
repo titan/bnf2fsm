@@ -1,0 +1,574 @@
+#+TITLE: The BNF to FSM Converter
+#+AUTHOR: Titan
+#+EMAIL: howay.tan@gmail.com
+#+DATE: <2019-05-30 Thu>
+#+KEYWORDS: bnf fsm converter
+#+OPTIONS: H:4 toc:t
+#+STARTUP: indent
+#+SUBTITLE: A tool to convert bnf to fsm
+#+titlepage: true
+#+titlepage-color: 06386e
+#+titlepage-text-color: FFFFFF
+#+titlepage-rule-color: FFFFFF
+#+titlepage-rule-height: 1
+
+* 基本框架
+#+begin_src python :tangle ${BUILDDIR}/${NAME}.py
+  #! /usr/bin/python
+  import lex_fsm
+  import syntax_fsm
+
+  <<structure>>
+  <<syntax-fsm-ctx>>
+  <<syntax-fsm-action>>
+  <<lex-fsm-ctx>>
+  <<lex-fsm-action>>
+
+  def main(args):
+    import os
+    <<extract-arguments>>
+    synctx = SyntaxFsmCtx()
+    synfsm = syntax_fsm.StateMachine(SyntaxFsmDelegate())
+    synctx.fsm = synfsm
+    lexctx = LexFsmCtx()
+    lexctx.syntax_fsm = synfsm
+    lexctx.syntax_ctx = synctx
+    lexfsm = lex_fsm.StateMachine(LexFsmDelegate())
+    with open(src, 'r') as fin:
+      c = fin.read()
+      for ch in c:
+        lexctx.input = ch
+        if ch.isdigit():
+          lexfsm.digit(lexctx)
+          lexctx.col += 1
+        elif ord(ch) >= ord('A') and ord(ch) <= ord('Z'):
+          lexfsm.letter(lexctx)
+          lexctx.col += 1
+        elif ord(ch) >= ord('a') and ord(ch) <= ord('z'):
+          lexfsm.letter(lexctx)
+          lexctx.col += 1
+        elif ch == '-':
+          lexfsm.minus(lexctx)
+          lexctx.col += 1
+        elif ch == '=':
+          lexfsm.equals(lexctx)
+          lexctx.col += 1
+        elif ch == '|':
+          lexfsm.pipe(lexctx)
+          lexctx.col += 1
+        elif ch == ' ' or ch == '\t':
+          lexfsm.space(lexctx)
+          lexctx.col += 1
+        elif ch == "'":
+          lexfsm.apostrophe(lexctx)
+          lexctx.col += 1
+        elif ch == '"':
+          lexfsm.double_quotes(lexctx)
+          lexctx.col += 1
+        elif ch == '\r':
+          lexfsm.cr(lexctx)
+          lexctx.col += 1
+        elif ch == '\n':
+          lexfsm.lf(lexctx)
+          lexctx.row += 1
+          lexctx.col = 1
+        else:
+          lexfsm.symbol(lexctx)
+          lexctx.col += 1
+      lexfsm.eof(lexctx)
+
+  if __name__ == '__main__':
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser()
+    <<argument-definations>>
+    args = parser.parse_args()
+    main(args)
+#+end_src
+* 命令行处理
+| argument | type   | usage                        |
+|----------+--------+------------------------------|
+| src      | string | specify the source file      |
+| dst      | string | specify the destination file |
+
+#+begin_src python :noweb-ref argument-definations
+  parser.add_argument('src', help='specify the source file')
+  parser.add_argument('dst', help='specify the destination file')
+#+end_src
+** 提取参数
+#+begin_src python :noweb-ref extract-arguments
+  src = args.src
+  dst = args.dst
+#+end_src
+* BNF 定义
+** 原始定义
+#+begin_src text
+  <syntax>         ::= <rule> | <rule> <syntax>
+  <rule>           ::= <opt-whitespace> "<" <rule-name> ">" <opt-whitespace> "::=" <opt-whitespace> <expression> <line-end>
+  <opt-whitespace> ::= " " <opt-whitespace> | ""
+  <expression>     ::= <list> | <list> <opt-whitespace> "|" <opt-whitespace> <expression>
+  <line-end>       ::= <opt-whitespace> <EOL> | <line-end> <line-end>
+  <list>           ::= <term> | <term> <opt-whitespace> <list>
+  <term>           ::= <literal> | "<" <rule-name> ">"
+  <literal>        ::= '"' <text1> '"' | "'" <text2> "'"
+  <text1>          ::= "" | <character1> <text1>
+  <text2>          ::= '' | <character2> <text2>
+  <character>      ::= <letter> | <digit> | <symbol>
+  <letter>         ::= "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+  <digit>          ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+  <symbol>         ::=  "|" | " " | "!" | "#" | "$" | "%" | "&" | "(" | ")" | "*" | "+" | "," | "-" | "." | "/" | ":" | ";" | ">" | "=" | "<" | "?" | "@" | "[" | "\" | "]" | "^" | "_" | "`" | "{" | "}" | "~"
+  <character1>     ::= <character> | "'"
+  <character2>     ::= <character> | '"'
+  <rule-name>      ::= <letter> | <rule-name> <rule-char>
+  <rule-char>      ::= <letter> | <digit> | "-"
+#+end_src
+** 简化定义
+#+begin_src text
+  syntax     = rules
+
+  rules      = rules rule
+             | rule
+
+  rule       = token "=" expression line-end
+
+  expression = expression line-end "|" list
+             | expression "|" list
+             | list
+
+  line-end   = line-end eol
+             | eol
+
+  list       = list term
+             | term
+
+  term       = literal
+             | token
+#+end_src
+* 数据结构
+#+begin_src python :noweb-ref structure
+  class Base:
+    pass
+
+  class Token(Base):
+    value = None
+
+    def __init__(self, value):
+      self.value = value
+
+    def __repr__(self):
+      return "Token: {0}".format(self.value)
+
+  class Literal(Base):
+    value = None
+
+    def __init__(self, value):
+      self.value = value
+
+    def __repr__(self):
+      return 'Literal: "{0}"'.format(self.value)
+
+  class Term(Base):
+    value = None
+
+    def __init__(self, value):
+      self.value = value
+
+    def __repr__(self):
+      return 'Term: {0}'.format(repr(self.value))
+
+  class List(Base):
+    items = []
+
+    def __repr__(self):
+      return 'List: [{0}]'.format(", ".join([repr(x) for x in self.items]))
+
+  class Eol(Base):
+
+    def __repr__(self):
+      return 'Eol'
+
+  class LineEnd(Base):
+
+    def __repr__(self):
+      return 'LineEnd'
+
+  class Expression(Base):
+    items = []
+
+    def __repr__(self):
+      return 'Expression: [{0}]'.format(", ".join([repr(x) for x in self.items]))
+
+  class Rule(Base):
+    target = None
+    expression = None
+
+    def __init__(self, target, expression):
+      self.target = target
+      self.expression = expression
+
+    def __repr__(self):
+      return 'Rule: {0} = {1}'.format(repr(self.target), repr(self.expression))
+
+  class Rules(Base):
+    items = []
+
+    def __repr__(self):
+      return 'Rules:\n{0}'.format(', '.join([repr(x) for x in self.items]))
+#+end_src
+* 词法状态机
+** 定义
+#+begin_src text :tangle ${BUILDDIR}/lex_fsm.txt
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  | state\event | letter        | digit      | symbol     | -          | =          | |          | '             | "             | space      | cr         | lf         | eof     |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  |             | save position |            |            |            |            |            |               |               |            |            |            |         |
+  |             | add to buf    |            |            |            | assign     | pipe       | save position | save position |            |            | eol        | eof     |
+  |             | ----          |            |            |            | ----       | ----       | ----          | ----          |            |            | ----       | ----    |
+  | INIT        | TOKEN         |            |            |            |            |            | '             | "             |            |            |            |         |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  |             |               |            |            |            | token      | token      |               |               |            |            | token      | token   |
+  |             | add to buf    | add to buf | add to buf | add to buf | assign     | pipe       |               |               | token      |            | eol        | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       |               |               | ----       |            | ----       | ----    |
+  | TOKEN       |               |            |            |            | INIT       | INIT       |               |               | INIT       |            | INIT       | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |            |               |               |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | literal       | add to buf    | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----    |
+  | '           |               |            |            |            |            |            | INIT          |               |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |            |               |               |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | add to buf    | literal       | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----    |
+  | "           |               |            |            |            |            |            |               | INIT          |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+#+end_src
+** 数据结构
+#+begin_src python :noweb-ref lex-fsm-ctx
+  class LexFsmCtx:
+    buf = ""
+    input = None
+    syntax_fsm = None
+    syntax_ctx = None
+    col = 1
+    row = 1
+    position = (1, 1)
+#+end_src
+** 执行动作
+#+begin_src python :noweb-ref lex-fsm-action
+  def _feed_event(ctx, val):
+    if isinstance(val, Token):
+      if val.value == '=':
+        ctx.syntax_fsm.equals(ctx.syntax_ctx)
+      elif val.value == '|':
+        ctx.syntax_fsm.pipe(ctx.syntax_ctx)
+      elif val.value == '$$':
+        ctx.syntax_fsm.dollar_dollar(ctx.syntax_ctx)
+      elif val.value == '\n':
+        ctx.syntax_fsm.eol(ctx.syntax_ctx)
+      else:
+        ctx.syntax_fsm.token(ctx.syntax_ctx)
+    elif isinstance(val, Literal):
+      ctx.syntax_fsm.literal(ctx.syntax_ctx)
+    elif isinstance(val, Term):
+      ctx.syntax_fsm.term(ctx.syntax_ctx)
+    elif isinstance(val, List):
+      ctx.syntax_fsm.list(ctx.syntax_ctx)
+    elif isinstance(val, Eol):
+      ctx.syntax_fsm.eol(ctx.syntax_ctx)
+    elif isinstance(val, LineEnd):
+      ctx.syntax_fsm.line_minus_end(ctx.syntax_ctx)
+    elif isinstance(val, Expression):
+      ctx.syntax_fsm.expression(ctx.syntax_ctx)
+    elif isinstance(val, Rule):
+      ctx.syntax_fsm.rule(ctx.syntax_ctx)
+    elif isinstance(val, Rules):
+      ctx.syntax_fsm.rules(ctx.syntax_ctx)
+
+  def _consume_queue(ctx):
+    while len(ctx.syntax_ctx.queue) > 0:
+      v = ctx.syntax_ctx.queue.pop(0)
+      ctx.syntax_ctx.input = v
+      _feed_event(ctx, v)
+    while len(ctx.syntax_ctx.delayed) > 0:
+      while len(ctx.syntax_ctx.queue) > 0:
+        v = ctx.syntax_ctx.queue.pop(0)
+        ctx.syntax_ctx.input = v
+        _feed_event(ctx, v)
+      d = ctx.syntax_ctx.delayed.pop(0)
+      ctx.syntax_ctx.input = d
+      _feed_event(ctx, d)
+
+  class LexFsmDelegate(lex_fsm.Delegate):
+    def save_position(self, ctx):
+      ctx.position = (ctx.row, ctx.col)
+      return NotImplemented
+
+    def add_to_buf(self, ctx):
+      ctx.buf += ctx.input
+
+    def assign(self, ctx):
+      _consume_queue(ctx)
+      t = Token("=")
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = (ctx.row, ctx.col)
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.equals(ctx.syntax_ctx)
+      _consume_queue(ctx)
+
+    def pipe(self, ctx):
+      _consume_queue(ctx)
+      t = Token("|")
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = (ctx.row, ctx.col)
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.pipe(ctx.syntax_ctx)
+      _consume_queue(ctx)
+
+    def eol(self, ctx):
+      _consume_queue(ctx)
+      t = Token("\n")
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = (ctx.row, ctx.col)
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.eol(ctx.syntax_ctx)
+      _consume_queue(ctx)
+
+    def token(self, ctx):
+      _consume_queue(ctx)
+      t = Token(ctx.buf)
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = ctx.position
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.token(ctx.syntax_ctx)
+      ctx.buf = ""
+      _consume_queue(ctx)
+
+    def eof(self, ctx):
+      _consume_queue(ctx)
+      t = Token("$$")
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = (ctx.row, ctx.col)
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.dollar_dollar(ctx.syntax_ctx)
+      _consume_queue(ctx)
+
+    def literal(self, ctx):
+      _consume_queue(ctx)
+      l = Literal(ctx.buf)
+      ctx.syntax_ctx.input = l
+      ctx.syntax_ctx.start = ctx.position
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.literal(ctx.syntax_ctx)
+      ctx.buf = ""
+      _consume_queue(ctx)
+#+end_src
+* 语法状态机
+** 定义
+#+begin_src text :tangle ${BUILDDIR}/syntax_fsm.txt
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  | state\event                                 | rules                                  | rule              | expression                                  | line-end                                    | list                                        | term             | token                                  | literal          | =                                           | |                                           | eol                    | $$                     |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             | shift                                  |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  | syntax = . rules $$                         | ----                                   | shift             |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  | rules = . rules rule                        | syntax = rules . $$                    | reduce 1 to rules | error                                       | error                                       | error                                       | error            | shift                                  | error            | error                                       | error                                       | error                  | error                  |
+  | rules = . rule                              | rules = rules . rule                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | rule = . token "=" expression line-end      | rule = . token "=" expression line-end |                   |                                             |                                             |                                             |                  | rule = token . "=" expression line-end |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        | shift             |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        | shift                  |
+  | syntax = rules . $$                         | error                                  | reduce 2 to rules | error                                       | error                                       | error                                       | error            | shift                                  | error            | error                                       | error                                       | error                  | reduce 2 to syntax     |
+  | rules = rules . rule                        | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | rule = . token "=" expression line-end      |                                        |                   |                                             |                                             |                                             |                  | rule = token . "=" expression line-end |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | shift                                       |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | ----                                        |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | rule = token "=" . expression line-end      |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | expression = . expression line-end "|" list |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | expression = . expression "|" list          |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | expression = . list                         |                                             |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | list = . list term                          |                                             |                        |                        |
+  |                                             | error                                  | error             | error                                       | error                                       | error                                       | error            | error                                  | error            | list = . term                               | error                                       | error                  | error                  |
+  |                                             | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | term = . token                              | ----                                        | ----                   | ----                   |
+  | rule = token . "=" expression line-end      |                                        |                   |                                             |                                             |                                             |                  |                                        |                  | term = . literal                            |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  | rule = token "=" . expression line-end      |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  | expression = . expression line-end "|" list |                                        |                   | shift                                       |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  | expression = . expression "|" list          |                                        |                   | ----                                        |                                             | shift                                       |                  |                                        |                  |                                             |                                             |                        |                        |
+  | expression = . list                         |                                        |                   | rule = token "=" expression . line-end      |                                             | ----                                        |                  |                                        |                  |                                             |                                             |                        |                        |
+  | list = . list term                          |                                        |                   | expression = expression . line-end "|" list |                                             | expression = list .                         | shift            | shift                                  | shift            |                                             |                                             |                        |                        |
+  | list = . term                               | error                                  | error             | expression = expression . "|" list          | error                                       | list = list . term                          | reduce 1 to list | reduce 1 to term                       | reduce 1 to term | error                                       | error                                       | error                  | error                  |
+  | term = . token                              | ----                                   | ----              | line-end = . line-end eol                   | ----                                        | term = . token                              | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   | line-end = . eol                            |                                             | term = . literal                            |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | shift                                       |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | ----                                        |                        |                        |
+  | rule = token "=" expression . line-end      |                                        |                   |                                             | shift                                       |                                             |                  |                                        |                  |                                             | expression = expression "|" . list          |                        |                        |
+  | expression = expression . line-end "|" list |                                        |                   |                                             | ----                                        |                                             |                  |                                        |                  |                                             | list = . list term                          | shift                  |                        |
+  | expression = expression . "|" list          | error                                  | error             | error                                       | rule = token "=" expression line-end .      | error                                       | error            | error                                  | error            | error                                       | list = . term                               | reduce 1 to line-end   | error                  |
+  | line-end = . line-end eol                   | ----                                   | ----              | ----                                        | expression = expression line-end . "|" list | ----                                        | ----             | ----                                   | ----             | ----                                        | term = . token                              | ----                   | ----                   |
+  | line-end = . eol                            |                                        |                   |                                             | line-end = line-end . eol                   |                                             |                  |                                        |                  |                                             | term = . literal                            |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  | expression = list .                         |                                        |                   |                                             |                                             |                                             | shift            | shift                                  | shift            |                                             | enqueue                                     | enqueue                | enqueue                |
+  | list = list . term                          | error                                  | error             | error                                       | error                                       | error                                       | reduce 2 to list | reduce 1 to term                       | reduce 1 to term | error                                       | reduce 1 to expression                      | reduce 1 to expression | reduce 1 to expression |
+  | term = . token                              | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | shift                                       |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | ----                                        |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | expression = expression line-end "|" . list |                        |                        |
+  |                                             |                                        |                   |                                             |                                             |                                             |                  | enqueue                                |                  |                                             | list = . list term                          | shift                  | enqueue                |
+  | rule = token "=" expression line-end .      | error                                  | error             | error                                       | error                                       | error                                       | error            | reduce 4 to rule                       | error            | error                                       | list = . term                               | reduce 2 to line-end   | reduce 4 to rule       |
+  | expression = expression line-end . "|" list | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | term = . token                              | ----                   | ----                   |
+  | line-end = line-end . eol                   |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             | term = . literal                            |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        |                   |                                             |                                             | shift                                       |                  |                                        |                  |                                             |                                             |                        |                        |
+  | expression = expression "|" . list          |                                        |                   |                                             |                                             | ----                                        |                  |                                        |                  |                                             |                                             |                        |                        |
+  | list = . list term                          |                                        |                   |                                             |                                             | expression = expression "|" list .          | shift            | shift                                  | shift            |                                             |                                             |                        |                        |
+  | list = . term                               | error                                  | error             | error                                       | error                                       | list = list . term                          | reduce 1 to list | reduce 1 to term                       | reduce 1 to term | error                                       | error                                       | error                  | error                  |
+  | term = . token                              | ----                                   | ----              | ----                                        | ----                                        | term = . token                              | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   |                                             |                                             | term = . literal                            |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  | expression = expression "|" list .          |                                        |                   |                                             |                                             |                                             | shift            | shift                                  | shift            |                                             |                                             | enqueue                | enqueue                |
+  | list = list . term                          | error                                  | error             | error                                       | error                                       | error                                       | reduce 2 to list | reduce 1 to term                       | reduce 1 to term | error                                       | error                                       | reduce 3 to expression | reduce 3 to expression |
+  | term = . token                              | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  |                                             |                                        |                   |                                             |                                             | shift                                       |                  |                                        |                  |                                             |                                             |                        |                        |
+  | expression = expression line-end "|" . list |                                        |                   |                                             |                                             | ----                                        |                  |                                        |                  |                                             |                                             |                        |                        |
+  | list = . list term                          |                                        |                   |                                             |                                             | expression = expression line-end "|" list . | shift            | shift                                  | shift            |                                             |                                             |                        |                        |
+  | list = . term                               | error                                  | error             | error                                       | error                                       | list = list . term                          | reduce 1 to list | reduce 1 to term                       | reduce 1 to term | error                                       | error                                       | error                  | error                  |
+  | term = . token                              | ----                                   | ----              | ----                                        | ----                                        | term = . token                              | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   |                                             |                                             | term = . literal                            |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+  | expression = expression line-end "|" list . |                                        |                   |                                             |                                             |                                             | shift            | shift                                  | shift            |                                             |                                             | enqueue                | enqueue                |
+  | list = list . term                          | error                                  | error             | error                                       | error                                       | error                                       | reduce 2 to list | reduce 1 to term                       | reduce 1 to term | error                                       | error                                       | reduce 4 to expression | reduce 4 to expression |
+  | term = . token                              | ----                                   | ----              | ----                                        | ----                                        | ----                                        | ----             | ----                                   | ----             | ----                                        | ----                                        | ----                   | ----                   |
+  | term = . literal                            |                                        |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
+  +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
+#+end_src
+** 数据结构
+#+begin_src python :noweb-ref syntax-fsm-ctx
+  class SyntaxFsmCtx:
+    input = None
+    result = None
+    fsm = None
+    value_stack = []
+    state_stack = []
+    queue = []
+    delayed = []
+    start = (1, 1)
+    stop = (1, 1)
+    rules = None
+#+end_src
+** 执行动作
+#+begin_src python :noweb-ref syntax-fsm-action
+  class SyntaxFsmDelegate(syntax_fsm.Delegate):
+
+    def shift(self, ctx):
+      ctx.value_stack.append(ctx.input)
+      ctx.state_stack.append(ctx.fsm.state)
+
+    def reduce_1_to_rules(self, ctx):
+      rule = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      rules = Rules()
+      rules.items.append(rule)
+      ctx.queue.append(rules)
+
+    def error(self, ctx):
+      print("Syntax Error at ({0}, {1})".format(ctx.start[0], ctx.start[1]))
+      print(ctx.input)
+      exit(-1)
+
+    def reduce_2_to_rules(self, ctx):
+      rule = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      rules = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      rules.items.append(rule)
+      ctx.queue.append(rules)
+
+    def reduce_2_to_syntax(self, ctx):
+      ctx.value_stack.pop()
+      ctx.state_stack.pop()
+      rules = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.rules = rules
+
+    def reduce_1_to_list(self, ctx):
+      term = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      lst = List()
+      lst.items.append(term)
+      ctx.queue.append(lst)
+
+    def reduce_1_to_term(self, ctx):
+      data = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      term = Term(data)
+      ctx.queue.append(term)
+
+    def reduce_1_to_lineend(self, ctx):
+      eol = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      lineend = LineEnd()
+      ctx.queue.append(lineend)
+
+    def reduce_2_to_list(self, ctx):
+      term = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      lst = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      lst.items.append(term)
+      ctx.queue.append(lst)
+
+    def enqueue(self, ctx):
+      ctx.delayed.append(ctx.input)
+
+    def reduce_1_to_expression(self, ctx):
+      lst = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression = Expression()
+      expression.items.append(lst)
+      ctx.queue.append(expression)
+
+    def reduce_4_to_rule(self, ctx):
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      token = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      rule = Rule(token, expression)
+      ctx.queue.append(rule)
+
+    def reduce_2_to_lineend(self, ctx):
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      lineend = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.queue.append(lineend)
+
+    def reduce_3_to_expression(self, ctx):
+      lst = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression.items.append(lst)
+      ctx.queue.append(expression)
+
+    def reduce_4_to_expression(self, ctx):
+      lst = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression = ctx.value_stack.pop()
+      ctx.fsm.state = ctx.state_stack.pop()
+      expression.items.append(lst)
+      ctx.queue.append(expression)
+#+end_src
