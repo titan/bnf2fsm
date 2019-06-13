@@ -17,65 +17,15 @@
   #! /usr/bin/python
   import lex_fsm
   import syntax_fsm
+  import copy
 
   <<structure>>
   <<syntax-fsm-ctx>>
   <<syntax-fsm-action>>
   <<lex-fsm-ctx>>
   <<lex-fsm-action>>
-
-  def main(args):
-    import os
-    <<extract-arguments>>
-    synctx = SyntaxFsmCtx()
-    synfsm = syntax_fsm.StateMachine(SyntaxFsmDelegate())
-    synctx.fsm = synfsm
-    lexctx = LexFsmCtx()
-    lexctx.syntax_fsm = synfsm
-    lexctx.syntax_ctx = synctx
-    lexfsm = lex_fsm.StateMachine(LexFsmDelegate())
-    with open(src, 'r') as fin:
-      c = fin.read()
-      for ch in c:
-        lexctx.input = ch
-        if ch.isdigit():
-          lexfsm.digit(lexctx)
-          lexctx.col += 1
-        elif ord(ch) >= ord('A') and ord(ch) <= ord('Z'):
-          lexfsm.letter(lexctx)
-          lexctx.col += 1
-        elif ord(ch) >= ord('a') and ord(ch) <= ord('z'):
-          lexfsm.letter(lexctx)
-          lexctx.col += 1
-        elif ch == '-':
-          lexfsm.minus(lexctx)
-          lexctx.col += 1
-        elif ch == '=':
-          lexfsm.equals(lexctx)
-          lexctx.col += 1
-        elif ch == '|':
-          lexfsm.pipe(lexctx)
-          lexctx.col += 1
-        elif ch == ' ' or ch == '\t':
-          lexfsm.space(lexctx)
-          lexctx.col += 1
-        elif ch == "'":
-          lexfsm.apostrophe(lexctx)
-          lexctx.col += 1
-        elif ch == '"':
-          lexfsm.double_quotes(lexctx)
-          lexctx.col += 1
-        elif ch == '\r':
-          lexfsm.cr(lexctx)
-          lexctx.col += 1
-        elif ch == '\n':
-          lexfsm.lf(lexctx)
-          lexctx.row += 1
-          lexctx.col = 1
-        else:
-          lexfsm.symbol(lexctx)
-          lexctx.col += 1
-      lexfsm.eof(lexctx)
+  <<utilities>>
+  <<main-logic>>
 
   if __name__ == '__main__':
     import argparse
@@ -201,6 +151,14 @@
     def __repr__(self):
       return 'Eol'
 
+  class Eof(Base):
+
+    def __str__(self):
+      return '$$'
+
+    def __repr__(self):
+      return 'Eof'
+
   class LineEnd(Base):
 
     def __str__(self):
@@ -242,33 +200,44 @@
 
     def __repr__(self):
       return 'Rules:\n{0}'.format(', '.join([repr(x) for x in self.items]))
+
+  class LRItem:
+
+    def __init__(self, rule):
+      self.rule = rule
+      self.pos = 0
+
+  class LRState:
+    def __init__(self, basis, closures):
+      self.basis = basis
+      self.closures = closures
 #+end_src
 * 词法状态机
 ** 定义
 #+begin_src text :tangle ${BUILDDIR}/lex_fsm.txt
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
-  | state\event | letter        | digit      | symbol     | -          | =          | |          | '             | "             | space      | cr         | lf         | eof     |
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
-  |             | save position |            |            |            |            |            |               |               |            |            |            |         |
-  |             | add to buf    |            |            |            | assign     | pipe       | save position | save position |            |            | eol        | eof     |
-  |             | ----          |            |            |            | ----       | ----       | ----          | ----          |            |            | ----       | ----    |
-  | INIT        | TOKEN         |            |            |            |            |            | '             | "             |            |            |            |         |
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
-  |             |               |            |            |            | token      | token      |               |               |            |            | token      | token   |
-  |             | add to buf    | add to buf | add to buf | add to buf | assign     | pipe       |               |               | token      |            | eol        | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       | ----       |               |               | ----       |            | ----       | ----    |
-  | TOKEN       |               |            |            |            | INIT       | INIT       |               |               | INIT       |            | INIT       | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
-  |             |               |            |            |            |            |            |               |               |            |            |            | literal |
-  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | literal       | add to buf    | add to buf | add to buf | add to buf | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----    |
-  | '           |               |            |            |            |            |            | INIT          |               |            |            |            | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
-  |             |               |            |            |            |            |            |               |               |            |            |            | literal |
-  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | add to buf    | literal       | add to buf | add to buf | add to buf | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----    |
-  | "           |               |            |            |            |            |            |               | INIT          |            |            |            | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+---------+
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  | state\event | letter        | digit      | symbol     | =          | |          | '             | "             | $          | space      | cr         | lf         | eof     |
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             | save position |            |            |            |            |               |               |            |            |            |            |         |
+  |             | add to buf    |            |            | assign     | pipe       | save position | save position | add to buf |            |            | eol        | eof     |
+  |             | ----          |            |            | ----       | ----       | ----          | ----          | ----       |            |            | ----       | ----    |
+  | INIT        | TOKEN         |            |            |            |            | '             | "             | TOKEN      |            |            |            |         |
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            | token      | token      |               |               |            |            |            | token      | token   |
+  |             | add to buf    | add to buf | add to buf | assign     | pipe       |               |               | add to buf | token      |            | eol        | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       |               |               | ----       | ----       |            | ----       | ----    |
+  | TOKEN       |               |            |            | INIT       | INIT       |               |               |            | INIT       |            | INIT       | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |               |               |            |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | literal       | add to buf    | add to buf | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
+  | '           |               |            |            |            |            | INIT          |               |            |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |               |               |            |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf    | literal       | add to buf | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
+  | "           |               |            |            |            |            |               | INIT          |            |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
 #+end_src
 ** 数据结构
 #+begin_src python :noweb-ref lex-fsm-ctx
@@ -289,8 +258,6 @@
         ctx.syntax_fsm.equals(ctx.syntax_ctx)
       elif val.value == '|':
         ctx.syntax_fsm.pipe(ctx.syntax_ctx)
-      elif val.value == '$$':
-        ctx.syntax_fsm.dollar_dollar(ctx.syntax_ctx)
       elif val.value == '\n':
         ctx.syntax_fsm.eol(ctx.syntax_ctx)
       else:
@@ -303,6 +270,8 @@
       ctx.syntax_fsm.list(ctx.syntax_ctx)
     elif isinstance(val, Eol):
       ctx.syntax_fsm.eol(ctx.syntax_ctx)
+    elif isinstance(val, Eof):
+      ctx.syntax_fsm.eof(ctx.syntax_ctx)
     elif isinstance(val, LineEnd):
       ctx.syntax_fsm.line_minus_end(ctx.syntax_ctx)
     elif isinstance(val, Expression):
@@ -354,8 +323,8 @@
 
     def eol(self, ctx):
       _consume_queue(ctx)
-      t = Token("\n")
-      ctx.syntax_ctx.input = t
+      eol = Eol()
+      ctx.syntax_ctx.input = eol
       ctx.syntax_ctx.start = (ctx.row, ctx.col)
       ctx.syntax_ctx.stop = (ctx.row, ctx.col)
       ctx.syntax_fsm.eol(ctx.syntax_ctx)
@@ -373,11 +342,11 @@
 
     def eof(self, ctx):
       _consume_queue(ctx)
-      t = Token("$$")
-      ctx.syntax_ctx.input = t
+      eof = Eof()
+      ctx.syntax_ctx.input = eof
       ctx.syntax_ctx.start = (ctx.row, ctx.col)
       ctx.syntax_ctx.stop = (ctx.row, ctx.col)
-      ctx.syntax_fsm.dollar_dollar(ctx.syntax_ctx)
+      ctx.syntax_fsm.eof(ctx.syntax_ctx)
       _consume_queue(ctx)
 
     def literal(self, ctx):
@@ -394,7 +363,7 @@
 ** 定义
 #+begin_src text :tangle ${BUILDDIR}/syntax_fsm.txt
   +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
-  | state\event                                 | rules                                  | rule              | expression                                  | line-end                                    | list                                        | term             | token                                  | literal          | =                                           | |                                           | eol                    | $$                     |
+  | state\event                                 | rules                                  | rule              | expression                                  | line-end                                    | list                                        | term             | token                                  | literal          | =                                           | |                                           | eol                    | eof                    |
   +---------------------------------------------+----------------------------------------+-------------------+---------------------------------------------+---------------------------------------------+---------------------------------------------+------------------+----------------------------------------+------------------+---------------------------------------------+---------------------------------------------+------------------------+------------------------+
   |                                             | shift                                  |                   |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
   | syntax = . rules $$                         | ----                                   | shift             |                                             |                                             |                                             |                  |                                        |                  |                                             |                                             |                        |                        |
@@ -596,4 +565,176 @@
       ctx.fsm.state = ctx.state_stack.pop()
       newexpression = Expression(expression.items + [lst])
       ctx.queue.append(newexpression)
+#+end_src
+* 核心逻辑
+** 基本框架
+#+begin_src python :noweb-ref main-logic
+  def main(args):
+    <<extract-arguments>>
+    <<init-fsms>>
+    <<read-and-execute>>
+#+end_src
+** 初始化状态机
+#+begin_src python :noweb-ref init-fsms
+  synctx = SyntaxFsmCtx()
+  synfsm = syntax_fsm.StateMachine(SyntaxFsmDelegate())
+  synctx.fsm = synfsm
+  lexctx = LexFsmCtx()
+  lexctx.syntax_fsm = synfsm
+  lexctx.syntax_ctx = synctx
+  lexfsm = lex_fsm.StateMachine(LexFsmDelegate())
+#+end_src
+** 读入文件并执行状态机
+#+begin_src python :noweb-ref read-and-execute
+  with open(src, 'r') as fin:
+    c = fin.read()
+    for ch in c:
+      lexctx.input = ch
+      if ch.isdigit():
+        lexfsm.digit(lexctx)
+        lexctx.col += 1
+      elif ord(ch) >= ord('A') and ord(ch) <= ord('Z'):
+        lexfsm.letter(lexctx)
+        lexctx.col += 1
+      elif ord(ch) >= ord('a') and ord(ch) <= ord('z'):
+        lexfsm.letter(lexctx)
+        lexctx.col += 1
+      elif ch == '=':
+        lexfsm.equals(lexctx)
+        lexctx.col += 1
+      elif ch == '|':
+        lexfsm.pipe(lexctx)
+        lexctx.col += 1
+      elif ch == ' ' or ch == '\t':
+        lexfsm.space(lexctx)
+        lexctx.col += 1
+      elif ch == "'":
+        lexfsm.apostrophe(lexctx)
+        lexctx.col += 1
+      elif ch == '"':
+        lexfsm.double_quotes(lexctx)
+        lexctx.col += 1
+      elif ch == '$':
+        lexfsm.dollar(lexctx)
+        lexctx.col += 1
+      elif ch == '\r':
+        lexfsm.cr(lexctx)
+        lexctx.col += 1
+      elif ch == '\n':
+        lexfsm.lf(lexctx)
+        lexctx.row += 1
+        lexctx.col = 1
+      else:
+        lexfsm.symbol(lexctx)
+        lexctx.col += 1
+    lexfsm.eof(lexctx)
+#+end_src
+* 辅助函数
+** 基本定义
+#+begin_src python :noweb-ref utilities
+  <<get-nonterminals>>
+  <<get-terminals>>
+  <<get-firsts>>
+  <<get-follows>>
+#+end_src
+** 提取非终结符
+#+begin_src python :noweb-ref get-nonterminals
+  def get_nonterminals(syntax):
+    nonterminals = {}
+    for rule in syntax.items:
+      nonterminals[str(rule.target)] = rule.target
+    return [x for x in nonterminals.values()]
+#+end_src
+** 提取终结符
+#+begin_src python :noweb-ref get-terminals
+  def get_terminals(syntax):
+    nonterminals = [str(x) for x in get_nonterminals(syntax)]
+    terminals = {}
+    for rule in syntax.items:
+      for lst in rule.expression.items:
+        for item in lst.items:
+          if str(item.value) not in nonterminals:
+            terminals[str(item.value)] = item.value
+    return [x for x in terminals.values()]
+#+end_src
+** 提取 FIRST
+对非终结符获取 FIRST 集合
+#+begin_src python :noweb-ref get-firsts
+  def sub_dict_cmp(d1, d2):
+    return all(k in d2 and str(d1[k]) == str(d2[k]) for k in d1) and all(k in d1 and str(d1[k]) == str(d2[k]) for k in d2)
+
+  def dict_cmp(d1, d2):
+    return all(k in d2 and sub_dict_cmp(d1[k], d2[k]) for k in d1) and all(k in d1 and sub_dict_cmp(d1[k], d2[k]) for k in d2)
+
+  def get_firsts(syntax):
+    firsts = {}
+    terminals = get_terminals(syntax)
+    nonterminals = get_nonterminals(syntax)
+    for t in terminals:
+      firsts[str(t)] = {str(t): t}
+    for t in nonterminals:
+      firsts[str(t)] = {}
+    for rule in syntax.items:
+      for lst in rule.expression.items:
+        if len(lst.items) == 1 and (str(lst.items[0]) == '""' or str(lst.items[0]) == "''"):
+          firsts[str(rule.target)]['""'] = '""'
+    looping = True
+    while looping:
+      origin_firsts = copy.deepcopy(firsts)
+      for rule in syntax.items:
+        for lst in rule.expression.items:
+          outer_continue = False
+          if len(lst.items) == 1 and (str(lst.items[0]) == '""' or str(lst.items[0]) == "''"):
+            continue
+          for item in lst.items:
+            for key in firsts[str(item.value)].keys():
+              if key != '""' and key != "''":
+                firsts[str(rule.target)][key] = key
+            if ('""' not in firsts[str(item.value)]) and ("''" not in firsts[str(item.value)]):
+              outer_continue = True
+              break
+          if outer_continue == True:
+            continue
+          firsts[str(rule.target)]['""'] = '""'
+      if dict_cmp(origin_firsts, firsts):
+        looping = False
+    return firsts
+#+end_src
+** 提取 FOLLOW
+#+begin_src python :noweb-ref get-follows
+  def get_follows(syntax, firsts):
+    follows = {}
+    follows[str(syntax.items[0].target)] = {'""': '""'}
+    follows['$$'] = {'""': '""'}
+    terminals = get_terminals(syntax)
+    nonterminals = get_nonterminals(syntax)
+    for t in terminals:
+      if str(t) == '$$':
+        continue
+      follows[str(t)] = {}
+    for t in nonterminals:
+      if str(t) == str(syntax.items[0].target):
+        continue
+      follows[str(t)] = {}
+    looping = True
+    while looping:
+      origin_follows = copy.deepcopy(follows)
+      for rule in syntax.items:
+        for lst in rule.expression.items:
+          for i, item in enumerate(lst.items):
+            if i < len(lst.items) - 1:
+              next = lst.items[i + 1]
+              for key in firsts[str(next.value)].keys():
+                if key == '""' or key == "''":
+                  continue
+                follows[str(item.value)][key] = key
+              if '""' in firsts[str(next.value)].keys() or "''" in firsts[str(next.value)].keys():
+                for key in follows[str(rule.target)].keys():
+                  follows[str(item.value)][key] = key
+            else:
+              for key in follows[str(rule.target)].keys():
+                follows[str(item.value)][key] = key
+      if dict_cmp(origin_follows, follows):
+        looping = False
+    return follows
 #+end_src
