@@ -225,9 +225,18 @@
 
   class LRItem:
 
-    def __init__(self, rule):
+    def __init__(self, rule: FlattenedRule):
       self.rule = rule
       self.pos = 0
+
+    def __str__(self):
+      dot = '·'
+      items = copy.deepcopy(self.rule.items)
+      items.insert(self.pos, dot)
+      return '{target} = {items}'.format(target = str(self.rule.target), items = ' '.join([str(x) for x in items]))
+
+    def __repr__(self):
+      return 'LRItem: ' + str(self)
 
   class LRState:
     def __init__(self, basis, closures):
@@ -656,6 +665,12 @@
 ** 构建状态机
 #+begin_src python :noweb-ref construct-fsm
   rules = flatten(lexctx.syntax_ctx.rules)
+  nonterminals = get_nonterminals(rules)
+  terminals = get_terminals(rules, nonterminals)
+  firsts = get_firsts(rules, nonterminals, terminals)
+  follows = get_follows(rules, firsts, nonterminals, terminals)
+  rootlr = LRItem(rules[0])
+  print(closure(rootlr, rules, nonterminals))
 #+end_src
 * 辅助函数
 ** 基本定义
@@ -665,10 +680,11 @@
   <<get-firsts>>
   <<get-follows>>
   <<flatten>>
+  <<closure>>
 #+end_src
 ** 提取非终结符
 #+begin_src python :noweb-ref get-nonterminals
-  def get_nonterminals(rules: Sequence[FlattenedRule]) -> Sequence[Term]:
+  def get_nonterminals(rules: Sequence[FlattenedRule]) -> Sequence[Union[Token, Literal]]:
     nonterminals = {}
     for rule in rules:
       nonterminals[str(rule.target)] = rule.target
@@ -676,7 +692,7 @@
 #+end_src
 ** 提取终结符
 #+begin_src python :noweb-ref get-terminals
-  def get_terminals(rules: Sequence[FlattenedRule], nonterminals: Sequence[Term]) -> Sequence[Term]:
+  def get_terminals(rules: Sequence[FlattenedRule], nonterminals: Sequence[Term]) -> Sequence[Union[Token, Literal]]:
     terminals = {}
     for rule in rules:
       for item in rule.items:
@@ -769,4 +785,17 @@
       for list in rule.expression:
         rules.append(FlattenedRule(rule.target, [x.value for x in list.items]))
     return rules
+#+end_src
+** 闭包计算
+#+begin_src python :noweb-ref closure
+  def closure(lritem: LRItem, rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Sequence[LRItem]:
+    result = []
+    right = lritem.rule.items[lritem.pos]
+    if str(right) in [str(x) for x in nonterminals]:
+      for rule in rules:
+        if str(right) == str(rule.target):
+          item = LRItem(rule)
+          result.append(item)
+          result += closure(item, rules, nonterminals)
+    return result
 #+end_src
