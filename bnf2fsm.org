@@ -18,6 +18,7 @@
   import lex_fsm
   import syntax_fsm
   import copy
+  from typing import Dict, List, Mapping, Sequence, Tuple, Type, Union
 
   <<structure>>
   <<syntax-fsm-ctx>>
@@ -143,6 +144,9 @@
     def __repr__(self):
       return 'List: [{0}]'.format(", ".join([repr(x) for x in self.items]))
 
+    def __getitem__(self, *args, **kwargs):
+      return self.items.__getitem__(*args, **kwargs)
+
   class Eol(Base):
 
     def __str__(self):
@@ -178,6 +182,9 @@
     def __repr__(self):
       return 'Expression: [{0}]'.format(", ".join([repr(x) for x in self.items]))
 
+    def __getitem__(self, *args, **kwargs):
+      return self.items.__getitem__(*args, **kwargs)
+
   class Rule(Base):
 
     def __init__(self, target, expression):
@@ -190,6 +197,18 @@
     def __repr__(self):
       return 'Rule: {0} = {1}'.format(repr(self.target), repr(self.expression))
 
+  class FlattenedRule(Base):
+
+    def __init__(self, target, items):
+      self.target = target
+      self.items = items
+
+    def __str__(self):
+      return '{0} = {1}'.format(str(self.target), ' '.join([str(x) for x in self.items]))
+
+    def __repr__(self):
+      return 'Rule: {0} = {1}'.format(repr(self.target), '  '.join([repr(x) for x in self.items]))
+
   class Rules(Base):
 
     def __init__(self, rule):
@@ -201,6 +220,9 @@
     def __repr__(self):
       return 'Rules:\n{0}'.format(', '.join([repr(x) for x in self.items]))
 
+    def __getitem__(self, *args, **kwargs):
+      return self.items.__getitem__(*args, **kwargs)
+
   class LRItem:
 
     def __init__(self, rule):
@@ -211,6 +233,7 @@
     def __init__(self, basis, closures):
       self.basis = basis
       self.closures = closures
+      self.groups = {}
 #+end_src
 * 词法状态机
 ** 定义
@@ -573,6 +596,7 @@
     <<extract-arguments>>
     <<init-fsms>>
     <<read-and-execute>>
+    <<construct-fsm>>
 #+end_src
 ** 初始化状态机
 #+begin_src python :noweb-ref init-fsms
@@ -629,6 +653,10 @@
         lexctx.col += 1
     lexfsm.eof(lexctx)
 #+end_src
+** 构建状态机
+#+begin_src python :noweb-ref construct-fsm
+  rules = flatten(lexctx.syntax_ctx.rules)
+#+end_src
 * 辅助函数
 ** 基本定义
 #+begin_src python :noweb-ref utilities
@@ -636,25 +664,24 @@
   <<get-terminals>>
   <<get-firsts>>
   <<get-follows>>
+  <<flatten>>
 #+end_src
 ** 提取非终结符
 #+begin_src python :noweb-ref get-nonterminals
-  def get_nonterminals(syntax):
+  def get_nonterminals(rules: Sequence[FlattenedRule]) -> Sequence[Term]:
     nonterminals = {}
-    for rule in syntax.items:
+    for rule in rules:
       nonterminals[str(rule.target)] = rule.target
     return [x for x in nonterminals.values()]
 #+end_src
 ** 提取终结符
 #+begin_src python :noweb-ref get-terminals
-  def get_terminals(syntax):
-    nonterminals = [str(x) for x in get_nonterminals(syntax)]
+  def get_terminals(rules: Sequence[FlattenedRule], nonterminals: Sequence[Term]) -> Sequence[Term]:
     terminals = {}
-    for rule in syntax.items:
-      for lst in rule.expression.items:
-        for item in lst.items:
-          if str(item.value) not in nonterminals:
-            terminals[str(item.value)] = item.value
+    for rule in rules:
+      for item in rule.items:
+        if str(item) not in nonterminals:
+          terminals[str(item)] = item
     return [x for x in terminals.values()]
 #+end_src
 ** 提取 FIRST
@@ -666,75 +693,80 @@
   def dict_cmp(d1, d2):
     return all(k in d2 and sub_dict_cmp(d1[k], d2[k]) for k in d1) and all(k in d1 and sub_dict_cmp(d1[k], d2[k]) for k in d2)
 
-  def get_firsts(syntax):
+  def get_firsts(rules: Sequence[FlattenedRule], nonterminals: Sequence[Term], terminals: Sequence[Term]) -> Mapping[str, Mapping[str, Union[Token, Literal]]]:
     firsts = {}
-    terminals = get_terminals(syntax)
-    nonterminals = get_nonterminals(syntax)
     for t in terminals:
       firsts[str(t)] = {str(t): t}
     for t in nonterminals:
       firsts[str(t)] = {}
-    for rule in syntax.items:
-      for lst in rule.expression.items:
-        if len(lst.items) == 1 and (str(lst.items[0]) == '""' or str(lst.items[0]) == "''"):
-          firsts[str(rule.target)]['""'] = '""'
+    empty = Literal('')
+    for rule in rules:
+      if len(rule.items) == 1 and (str(rule.items[0])) == str(empty):
+        firsts[str(rule.target)][str(empty)] = empty
     looping = True
     while looping:
       origin_firsts = copy.deepcopy(firsts)
-      for rule in syntax.items:
-        for lst in rule.expression.items:
-          outer_continue = False
-          if len(lst.items) == 1 and (str(lst.items[0]) == '""' or str(lst.items[0]) == "''"):
-            continue
-          for item in lst.items:
-            for key in firsts[str(item.value)].keys():
-              if key != '""' and key != "''":
-                firsts[str(rule.target)][key] = key
-            if ('""' not in firsts[str(item.value)]) and ("''" not in firsts[str(item.value)]):
-              outer_continue = True
-              break
-          if outer_continue == True:
-            continue
-          firsts[str(rule.target)]['""'] = '""'
+      for rule in rules:
+        outer_continue = False
+        if len(rule.items) == 1 and (str(rule.items[0])) == str(empty):
+          continue
+        for item in rule.items:
+          for key in firsts[str(item)].keys():
+            if key != str(empty):
+              firsts[str(rule.target)][key] = key
+          if (str(empty) not in firsts[str(item)]):
+            outer_continue = True
+            break
+        if outer_continue == True:
+          continue
+        firsts[str(rule.target)][str(empty)] = empty
       if dict_cmp(origin_firsts, firsts):
         looping = False
     return firsts
 #+end_src
 ** 提取 FOLLOW
 #+begin_src python :noweb-ref get-follows
-  def get_follows(syntax, firsts):
+  def get_follows(rules: Sequence[FlattenedRule], firsts: Mapping[str, Mapping[str, Union[Token, Literal]]], nonterminals: Sequence[Term], terminals: Sequence[Term]) -> Mapping[str, Mapping[str, Union[Token, Literal]]]:
     follows = {}
-    follows[str(syntax.items[0].target)] = {'""': '""'}
-    follows['$$'] = {'""': '""'}
-    terminals = get_terminals(syntax)
-    nonterminals = get_nonterminals(syntax)
+    empty = Literal('')
+    eof = Literal('$$')
+    follows[str(rules[0].target)] = {str(empty): empty}
+    follows[str(eof)] = {str(empty): empty}
     for t in terminals:
-      if str(t) == '$$':
+      if str(t) == str(eof):
         continue
       follows[str(t)] = {}
     for t in nonterminals:
-      if str(t) == str(syntax.items[0].target):
+      if str(t) == str(rules[0].target):
         continue
       follows[str(t)] = {}
     looping = True
     while looping:
       origin_follows = copy.deepcopy(follows)
-      for rule in syntax.items:
-        for lst in rule.expression.items:
-          for i, item in enumerate(lst.items):
-            if i < len(lst.items) - 1:
-              next = lst.items[i + 1]
-              for key in firsts[str(next.value)].keys():
-                if key == '""' or key == "''":
-                  continue
-                follows[str(item.value)][key] = key
-              if '""' in firsts[str(next.value)].keys() or "''" in firsts[str(next.value)].keys():
-                for key in follows[str(rule.target)].keys():
-                  follows[str(item.value)][key] = key
-            else:
+      for rule in rules:
+        for i, item in enumerate(rule.items):
+          if i < len(rule.items) - 1:
+            next = rule.items[i + 1]
+            for key in firsts[str(next)].keys():
+              if key == str(empty):
+                continue
+              follows[str(item)][key] = firsts[str(next)][key]
+            if str(empty) in firsts[str(next)].keys():
               for key in follows[str(rule.target)].keys():
-                follows[str(item.value)][key] = key
+                follows[str(item)][key] = follows[str(rule.target)][key]
+          else:
+            for key in follows[str(rule.target)].keys():
+              follows[str(item)][key] = follows[str(rule.target)][key]
       if dict_cmp(origin_follows, follows):
         looping = False
     return follows
+#+end_src
+** 扁平化
+#+begin_src python :noweb-ref flatten
+  def flatten(syntax):
+    rules = []
+    for rule in syntax:
+      for list in rule.expression:
+        rules.append(FlattenedRule(rule.target, [x.value for x in list.items]))
+    return rules
 #+end_src
