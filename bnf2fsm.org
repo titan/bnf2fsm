@@ -242,10 +242,12 @@
     basis: Sequence[LRItem]
     closures: Mapping[str, LRItem]
     groups: Mapping[str, Sequence[LRItem]]
+    #transitions: Mapping[str, LRState]
     def __init__(self, basis: Sequence[LRItem], closures: Mapping[str, LRItem]):
       self.basis = basis
       self.closures = closures
       self.groups = group(basis + [x for x in closures.values()])
+      self.transitions = {}
 
     def __str__(self):
       return '\n'.join([str(y) for y in (self.basis + [x for x in self.closures.values()])])
@@ -680,10 +682,10 @@
   states = substate(rootstate, {str(rootstate): rootstate}, rules, nonterminals)
   for s in states.values():
     print(s)
+    for key in s.transitions.keys():
+      print()
+      print(' ' * 2 + key + " => " + (str(s.transitions[key]).replace('\n', '\n' + ' ' * (2 + len(key + " => ")))))
     print()
-  #for key in states.keys():
-  #  print(states[key])
-  #  print()
 #+end_src
 * 辅助函数
 ** 基本定义
@@ -838,6 +840,7 @@
 ** 构建子状态
 #+begin_src python :noweb-ref substate
   def substate(root: LRState, states: Mapping[str, Sequence[LRState]], rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, Sequence[LRState]]:
+    count = 0
     for (input, lritems) in root.groups.items():
       if len(lritems) == 1 and lritems[0].pos == len(lritems[0].rule.items) - 1:
         continue
@@ -851,6 +854,7 @@
           newlritems.append(lritem)
       if len(newlritems) > 0:
         state = LRState(newlritems, closure(newlritems, rules, nonterminals))
+        root.transitions[input] = state
         if str(state) not in states:
           states[str(state)] = state
           for (key, value) in substate(state, states, rules, nonterminals).items():
