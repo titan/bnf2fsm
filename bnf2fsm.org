@@ -243,11 +243,13 @@
     closures: Mapping[str, LRItem]
     groups: Mapping[str, Sequence[LRItem]]
     #transitions: Mapping[str, LRState]
+    actions: Mapping[str, str]
     def __init__(self, basis: Sequence[LRItem], closures: Mapping[str, LRItem]):
       self.basis = basis
       self.closures = closures
       self.groups = group(basis + [x for x in closures.values()])
       self.transitions = {}
+      self.actions = None
 
     def __str__(self):
       return '\n'.join([str(y) for y in (self.basis + [x for x in self.closures.values()])])
@@ -681,10 +683,15 @@
   rootstate = LRState([rootlr], closure([rootlr], rules, nonterminals))
   states = substate(rootstate, {str(rootstate): rootstate}, rules, nonterminals)
   for s in states.values():
+    s.actions = action(s, terminals, follows)
     print(s)
-    for key in s.transitions.keys():
+    for x in terminals:
       print()
-      print(' ' * 2 + key + " => " + (str(s.transitions[key]).replace('\n', '\n' + ' ' * (2 + len(key + " => ")))))
+      print(' ' * 2 + str(x) + " => " + s.actions[str(x)].replace('\n', " |> "))
+    #for key in s.transitions.keys():
+    #  print()
+    #  print(' ' * 2 + key + " => " + (str(s.transitions[key]).replace('\n', '\n' + ' ' * (2 + len(key + " => ")))))
+
     print()
 #+end_src
 * 辅助函数
@@ -698,6 +705,7 @@
   <<closure>>
   <<group>>
   <<substate>>
+  <<action>>
 #+end_src
 ** 提取非终结符
 #+begin_src python :noweb-ref get-nonterminals
@@ -805,24 +813,22 @@
 #+end_src
 ** 闭包计算
 #+begin_src python :noweb-ref closure
-  def _closure(lritem: LRItem, rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, LRItem]:
-    result = {}
-    right = lritem.rule.items[lritem.pos]
-    if str(right) in [str(x) for x in nonterminals]:
+  def _closure(closures: Mapping[str, LRItem], lritem: LRItem, rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, LRItem]:
+    if lritem.pos == len(lritem.rule.items):
+      return
+    right = str(lritem.rule.items[lritem.pos])
+    if right in [str(x) for x in nonterminals]:
       for rule in rules:
-        if str(right) == str(rule.target):
+        if right == str(rule.target):
           item = LRItem(rule)
-          result[str(item)] = item
-          subresult = _closure(item, rules, nonterminals)
-          for (key, value) in subresult.items():
-            result[key] = value
-    return result
+          if str(item) not in closures:
+            closures[str(item)] = item
+            _closure(closures, item, rules, nonterminals)
 
   def closure(basis: Sequence[LRItem], rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, LRItem]:
     result = {}
     for item in basis:
-      for (key, value) in _closure(item, rules, nonterminals).items():
-        result[key] = value
+      _closure(result, item, rules, nonterminals)
     return result
 #+end_src
 ** 分组计算
@@ -830,6 +836,8 @@
   def group(items: Sequence[LRItem]) -> Mapping[str, Sequence[LRItem]]:
     result = {}
     for item in items:
+      if item.pos == len(item.rule.items):
+        continue
       right = item.rule.items[item.pos]
       if str(right) in result:
         result[str(right)].append(item)
@@ -860,4 +868,28 @@
           for (key, value) in substate(state, states, rules, nonterminals).items():
             states[key] = value
     return states
+#+end_src
+** 动作计算
+#+begin_src python :noweb-ref action
+  def action(state: LRState, terminals: Sequence[Term], follows: Mapping[str, Mapping[str, Union[Token, Literal]]]):
+    actions = {}
+    for inp in terminals:
+      input = str(inp)
+      if input in state.transitions:
+        actions[input] = "shift"
+      else:
+        for lritem in state.basis + [x for x in state.closures.values()]:
+          if lritem.pos == len(lritem.rule.items):
+            followset = follows[str(lritem.rule.target)]
+            if input in followset:
+              actions[input] = "enqueue\n" + "reduce {num} to {term}".format(num = len(lritem.rule.items), term = str(lritem.rule.target))
+          elif lritem.pos == len(lritem.rule.items) - 1:
+            if str(lritem.rule.items[lritem.pos]) == input:
+              actions[input] = "shift\n" + "reduce {num} to {term}".format(num = len(lritem.rule.items), term = str(lritem.rule.target))
+          else:
+            if str(lritem.rule.items[lritem.pos]) == input:
+              actions[input] = "shift"
+        if input not in actions:
+          actions[input] = "syntax error"
+    return actions
 #+end_src
