@@ -239,10 +239,16 @@
       return 'LRItem: ' + str(self)
 
   class LRState:
-    def __init__(self, basis, closures):
+    basis: Sequence[LRItem]
+    closures: Mapping[str, LRItem]
+    groups: Mapping[str, Sequence[LRItem]]
+    def __init__(self, basis: Sequence[LRItem], closures: Mapping[str, LRItem]):
       self.basis = basis
       self.closures = closures
-      self.groups = {}
+      self.groups = group(basis + [x for x in closures.values()])
+
+    def __str__(self):
+      return '\n'.join([str(y) for y in (self.basis + [x for x in self.closures.values()])])
 #+end_src
 * 词法状态机
 ** 定义
@@ -670,7 +676,14 @@
   firsts = get_firsts(rules, nonterminals, terminals)
   follows = get_follows(rules, firsts, nonterminals, terminals)
   rootlr = LRItem(rules[0])
-  print(closure(rootlr, rules, nonterminals))
+  rootstate = LRState([rootlr], closure([rootlr], rules, nonterminals))
+  states = substate(rootstate, {str(rootstate): rootstate}, rules, nonterminals)
+  for s in states.values():
+    print(s)
+    print()
+  #for key in states.keys():
+  #  print(states[key])
+  #  print()
 #+end_src
 * 辅助函数
 ** 基本定义
@@ -681,6 +694,8 @@
   <<get-follows>>
   <<flatten>>
   <<closure>>
+  <<group>>
+  <<substate>>
 #+end_src
 ** 提取非终结符
 #+begin_src python :noweb-ref get-nonterminals
@@ -788,14 +803,57 @@
 #+end_src
 ** 闭包计算
 #+begin_src python :noweb-ref closure
-  def closure(lritem: LRItem, rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Sequence[LRItem]:
-    result = []
+  def _closure(lritem: LRItem, rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, LRItem]:
+    result = {}
     right = lritem.rule.items[lritem.pos]
     if str(right) in [str(x) for x in nonterminals]:
       for rule in rules:
         if str(right) == str(rule.target):
           item = LRItem(rule)
-          result.append(item)
-          result += closure(item, rules, nonterminals)
+          result[str(item)] = item
+          subresult = _closure(item, rules, nonterminals)
+          for (key, value) in subresult.items():
+            result[key] = value
     return result
+
+  def closure(basis: Sequence[LRItem], rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, LRItem]:
+    result = {}
+    for item in basis:
+      for (key, value) in _closure(item, rules, nonterminals).items():
+        result[key] = value
+    return result
+#+end_src
+** 分组计算
+#+begin_src python :noweb-ref group
+  def group(items: Sequence[LRItem]) -> Mapping[str, Sequence[LRItem]]:
+    result = {}
+    for item in items:
+      right = item.rule.items[item.pos]
+      if str(right) in result:
+        result[str(right)].append(item)
+      else:
+        result[str(right)] = [item]
+    return result
+#+end_src
+** 构建子状态
+#+begin_src python :noweb-ref substate
+  def substate(root: LRState, states: Mapping[str, Sequence[LRState]], rules: Sequence[FlattenedRule], nonterminals: Sequence[Union[Token, Literal]]) -> Mapping[str, Sequence[LRState]]:
+    for (input, lritems) in root.groups.items():
+      if len(lritems) == 1 and lritems[0].pos == len(lritems[0].rule.items) - 1:
+        continue
+      originlritems = copy.deepcopy(lritems)
+      newlritems = []
+      for lritem in originlritems:
+        if lritem.pos == len(lritem.rule.items):
+          continue
+        else:
+          lritem.pos += 1
+          newlritems.append(lritem)
+      if len(newlritems) > 0:
+        state = LRState(newlritems, closure(newlritems, rules, nonterminals))
+        if str(state) not in states:
+          states[str(state)] = state
+          for (key, value) in substate(state, states, rules, nonterminals).items():
+            states[key] = value
+    return states
 #+end_src
