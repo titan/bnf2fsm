@@ -26,6 +26,7 @@
   <<lex-fsm-ctx>>
   <<lex-fsm-action>>
   <<utilities>>
+  <<save-model>>
   <<main-logic>>
 
   if __name__ == '__main__':
@@ -74,7 +75,7 @@
   <rule-char>      ::= <letter> | <digit> | "-"
 #+end_src
 ** 简化定义
-#+begin_src text
+#+begin_src text :tangle ${BUILDDIR}/syntax.bnf
   syntax     = rules
 
   rules      = rules rule
@@ -616,6 +617,8 @@
     <<init-fsms>>
     <<read-and-execute>>
     <<construct-fsm>>
+    <<build-model>>
+    save(model, dst)
 #+end_src
 ** 初始化状态机
 #+begin_src python :noweb-ref init-fsms
@@ -684,15 +687,60 @@
   states = substate(rootstate, {str(rootstate): rootstate}, rules, nonterminals)
   for s in states.values():
     s.actions = action(s, terminals, follows)
-    print(s)
+#+end_src
+** 构建模型
+#+begin_src python :noweb-ref build-model
+  model = [['state\event'] + [str(x) for x in terminals]]
+  for state in states.values():
+    row = [str(state)]
     for x in terminals:
-      print()
-      print(' ' * 2 + str(x) + " => " + s.actions[str(x)].replace('\n', " |> "))
-    #for key in s.transitions.keys():
-    #  print()
-    #  print(' ' * 2 + key + " => " + (str(s.transitions[key]).replace('\n', '\n' + ' ' * (2 + len(key + " => ")))))
-
-    print()
+      term = str(x)
+      cell = []
+      if term in state.actions:
+        cell.append(str(state.actions[term]))
+      cell.append('----')
+      if term in state.transitions:
+        cell.append(str(state.transitions[term]))
+      if len(cell) > 1:
+        row.append('\n'.join(cell))
+      else:
+        row.append('')
+    model.append(row)
+#+end_src
+* 保存结果
+#+begin_src python :noweb-ref save-model
+  def save(model, dst: str):
+    maxwidths = [0] * len(model[0])
+    for i in range(len(model)):
+      for j in range(len(model[i])):
+        celllen = max(map(lambda x: len(x), model[i][j].split('\n')))
+        celllen = (celllen + 2) if celllen > 0 else 1
+        if celllen > maxwidths[j]:
+          maxwidths[j] = celllen
+    linesplitor = '+%s+' % '+'.join(map(lambda x: '-' * x if x > 0 else '-', maxwidths))
+    with open(dst, 'w') as out:
+      out.write(linesplitor + '\n')
+      for i in range(len(model)):
+        maxline = 0
+        for j in range(len(model[i])):
+          cell = model[i][j]
+          linecnt = len(cell.split('\n'))
+          if linecnt > maxline:
+            maxline = linecnt
+        row = []
+        for j in range(len(model[i])):
+          cell = model[i][j]
+          lines = cell.split('\n')
+          if len(lines) < maxline:
+            row.append([''] * (maxline - len(lines)) + lines)
+          else:
+            row.append(lines)
+        for k in range(maxline):
+          ln = []
+          for j in range(len(model[i])):
+            ln.append(' ' + row[j][k].ljust(maxwidths[j] - 1))
+          out.write('|%s|\n' % '|'.join(ln))
+        out.write(linesplitor + '\n')
 #+end_src
 * 辅助函数
 ** 基本定义
