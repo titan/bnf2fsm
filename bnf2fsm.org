@@ -38,19 +38,26 @@
     main(args)
 #+end_src
 * 命令行处理
+|----------+--------+------------------------------|
 | argument | type   | usage                        |
 |----------+--------+------------------------------|
 | src      | string | specify the source file      |
+|----------+--------+------------------------------|
 | dst      | string | specify the destination file |
+|----------+--------+------------------------------|
+| --fsmc   | bool   | make fsmc happy              |
+|----------+--------+------------------------------|
 
 #+begin_src python :noweb-ref argument-definations
   parser.add_argument('src', help='specify the source file')
   parser.add_argument('dst', help='specify the destination file')
+  parser.add_argument('--fsmc', action='store_true', help='fsmc model')
 #+end_src
 ** 提取参数
 #+begin_src python :noweb-ref extract-arguments
   src = args.src
   dst = args.dst
+  fsmc = args.fsmc
 #+end_src
 * BNF 定义
 ** 原始定义
@@ -258,29 +265,29 @@
 * 词法状态机
 ** 定义
 #+begin_src text :tangle ${BUILDDIR}/lex_fsm.txt
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
-  | state\event | letter        | digit      | symbol     | =          | |          | '             | "             | $          | space      | cr         | lf         | eof     |
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
-  |             | save position |            |            |            |            |               |               |            |            |            |            |         |
-  |             | add to buf    |            |            | assign     | pipe       | save position | save position | add to buf |            |            | eol        | eof     |
-  |             | ----          |            |            | ----       | ----       | ----          | ----          | ----       |            |            | ----       | ----    |
-  | INIT        | TOKEN         |            |            |            |            | '             | "             | TOKEN      |            |            |            |         |
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
-  |             |               |            |            | token      | token      |               |               |            |            |            | token      | token   |
-  |             | add to buf    | add to buf | add to buf | assign     | pipe       |               |               | add to buf | token      |            | eol        | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       |               |               | ----       | ----       |            | ----       | ----    |
-  | TOKEN       |               |            |            | INIT       | INIT       |               |               |            | INIT       |            | INIT       | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
-  |             |               |            |            |            |            |               |               |            |            |            |            | literal |
-  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | literal       | add to buf    | add to buf | add to buf | add to buf | add to buf | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
-  | '           |               |            |            |            |            | INIT          |               |            |            |            |            | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
-  |             |               |            |            |            |            |               |               |            |            |            |            | literal |
-  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf    | literal       | add to buf | add to buf | add to buf | add to buf | eof     |
-  |             | ----          | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
-  | "           |               |            |            |            |            |               | INIT          |            |            |            |            | INIT    |
-  +-------------+---------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  | state\event | letter        | digit      | symbol     | epsilon    | =          | |          | '             | "             | $          | space      | cr         | lf         | eof     |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             | save position |            |            |            |            |            |               |               |            |            |            |            |         |
+  |             | add to buf    |            |            | epsilon    | assign     | pipe       | save position | save position | add to buf |            |            | eol        | eof     |
+  |             | ----          |            |            | ----       | ----       | ----       | ----          | ----          | ----       |            |            | ----       | ----    |
+  | INIT        | TOKEN         |            |            |            |            |            | '             | "             | TOKEN      |            |            |            |         |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            |            | token      | token      |               |               |            |            |            | token      | token   |
+  |             | add to buf    | add to buf | add to buf | add to buf | assign     | pipe       |               |               | add to buf | token      |            | eol        | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       |               |               | ----       | ----       |            | ----       | ----    |
+  | TOKEN       |               |            |            |            | INIT       | INIT       |               |               |            | INIT       |            | INIT       | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |            |               |               |            |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | literal       | add to buf    | add to buf | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
+  | '           |               |            |            |            |            |            | INIT          |               |            |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
+  |             |               |            |            |            |            |            |               |               |            |            |            |            | literal |
+  |             | add to buf    | add to buf | add to buf | add to buf | add to buf | add to buf | add to buf    | literal       | add to buf | add to buf | add to buf | add to buf | eof     |
+  |             | ----          | ----       | ----       | ----       | ----       | ----       | ----          | ----          | ----       | ----       | ----       | ----       | ----    |
+  | "           |               |            |            |            |            |            |               | INIT          |            |            |            |            | INIT    |
+  +-------------+---------------+------------+------------+------------+------------+------------+---------------+---------------+------------+------------+------------+------------+---------+
 #+end_src
 ** 数据结构
 #+begin_src python :noweb-ref lex-fsm-ctx
@@ -345,6 +352,15 @@
 
     def add_to_buf(self, ctx):
       ctx.buf += ctx.input
+
+    def epsilon(self, ctx):
+      _consume_queue(ctx)
+      t = Token("ε")
+      ctx.syntax_ctx.input = t
+      ctx.syntax_ctx.start = (ctx.row, ctx.col)
+      ctx.syntax_ctx.stop = (ctx.row, ctx.col)
+      ctx.syntax_fsm.literal(ctx.syntax_ctx)
+      _consume_queue(ctx)
 
     def assign(self, ctx):
       _consume_queue(ctx)
@@ -563,6 +579,9 @@
       elif ord(ch) >= ord('a') and ord(ch) <= ord('z'):
         lexfsm.letter(lexctx)
         lexctx.col += 1
+      elif ch == 'ε':
+        lexfsm.epsilon(lexctx)
+        lexctx.col += 1
       elif ch == '=':
         lexfsm.equals(lexctx)
         lexctx.col += 1
@@ -607,8 +626,14 @@
     s.actions = action(s, terminals, follows)
 #+end_src
 ** 构建模型
+在 fsmc 模式下，所有 Literal 都会被 normalize 后的结果所替代。
 #+begin_src python :noweb-ref build-model
-  model = [['state\event'] + [str(x) for x in terminals]]
+  model = [['state\event']]
+  for x in terminals:
+    if isinstance(x, Literal):
+      model[0].append("""literal-token(val: string)[val == "%s"]""" % (x.value.replace('"', '\\"')))
+    else:
+      model[0].append(str(x))
   for state in states.values():
     row = [str(state)]
     for x in terminals:
@@ -706,7 +731,7 @@
       firsts[str(t)] = {str(t): t}
     for t in nonterminals:
       firsts[str(t)] = {}
-    empty = Literal('')
+    empty = Token('ε')
     for rule in rules:
       if len(rule.items) == 1 and (str(rule.items[0])) == str(empty):
         firsts[str(rule.target)][str(empty)] = empty
@@ -735,8 +760,8 @@
 #+begin_src python :noweb-ref get-follows
   def get_follows(rules: Sequence[FlattenedRule], firsts: Mapping[str, Mapping[str, Union[Token, Literal]]], nonterminals: Sequence[Term], terminals: Sequence[Term]) -> Mapping[str, Mapping[str, Union[Token, Literal]]]:
     follows = {}
-    empty = Literal('')
-    eof = Literal('$$')
+    empty = Token('ε')
+    eof = Token('$$')
     follows[str(rules[0].target)] = {str(empty): empty}
     follows[str(eof)] = {str(empty): empty}
     for t in terminals:
