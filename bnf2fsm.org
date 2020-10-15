@@ -27,6 +27,7 @@
   <<lex-fsm-action>>
   <<utilities>>
   <<save-model>>
+  <<save-model-as-xlsx>>
   <<main-logic>>
 
   if __name__ == '__main__':
@@ -552,7 +553,10 @@
     <<read-and-execute>>
     <<construct-fsm>>
     <<build-model>>
-    save(model, dst)
+    if dst.endswith(".xlsx"):
+      save_xlsx(model, dst)
+    else:
+      save(model, dst)
 #+end_src
 ** 初始化状态机
 #+begin_src python :noweb-ref init-fsms
@@ -628,12 +632,15 @@
 ** 构建模型
 在 fsmc 模式下，所有 Literal 都会被 normalize 后的结果所替代。
 #+begin_src python :noweb-ref build-model
-  model = [['state\event']]
-  for x in terminals:
-    if isinstance(x, Literal):
-      model[0].append("""literal-token(val: string)[val == "%s"]""" % (x.value.replace('"', '\\"')))
-    else:
-      model[0].append(str(x))
+  if fsmc:
+    model = [['state\event']]
+    for x in terminals:
+      if isinstance(x, Literal):
+        model[0].append("""literal-token(val: string)[val == "%s"]""" % (x.value.replace('"', '\\"')))
+      else:
+        model[0].append(str(x))
+  else:
+    model = [['state\event'] + [str(x) for x in terminals]]
   for state in states.values():
     row = [str(state)]
     for x in terminals:
@@ -684,6 +691,21 @@
             ln.append(' ' + row[j][k].ljust(maxwidths[j] - 1))
           out.write('|%s|\n' % '|'.join(ln))
         out.write(linesplitor + '\n')
+#+end_src
+#+begin_src python :noweb-ref save-model-as-xlsx
+  def save_xlsx(model, dst: str):
+    from openpyxl import Workbook
+    wb = Workbook(write_only = True)
+    ws = wb.create_sheet()
+    for rid in range(len(model)):
+      row = []
+      for cid in range(len(model[rid])):
+        if model[rid][cid]:
+          row.append(model[rid][cid])
+        else:
+          row.append(None)
+      ws.append(row)
+    wb.save(dst)
 #+end_src
 * 辅助函数
 ** 基本定义
